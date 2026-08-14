@@ -226,15 +226,13 @@ td.acciones button {
 
 /* Estados */
 .badge-ABIERTA { background: #fef3c7; color: #92400e; }
-.badge-EN_PROCESO { background: #dbeafe; color: #1e40af; }
+.badge-EN_PROGRESO { background: #dbeafe; color: #1e40af; }
 .badge-RESUELTA { background: #dcfce7; color: #166534; }
-.badge-CERRADA { background: #f1f5f9; color: #475569; }
 
-/* Prioridades (Opcional si usas badges para la prioridad) */
-.prioridad-Baja { color: #16a34a; font-weight: 600; }
-.prioridad-Media { color: #d97706; font-weight: 600; }
-.prioridad-Alta { color: #dc2626; font-weight: 600; }
-.prioridad-Critica { color: #991b1b; font-weight: 800; }
+/* Prioridades */
+.prioridad-BAJA { color: #16a34a; font-weight: 600; }
+.prioridad-MEDIA { color: #d97706; font-weight: 600; }
+.prioridad-ALTA { color: #dc2626; font-weight: 600; }
 
 /* ==========================================================================
    MENSAJES DE FEEDBACK (NOTIFICACIONES)

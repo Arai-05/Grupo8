@@ -58,7 +58,7 @@ function renderTabla(incidencias) {
     fila.innerHTML = `
       <td>${escapeHtml(inc.titulo)}</td>
       <td>${escapeHtml(inc.categoria || "-")}</td>
-      <td>${inc.prioridad || "-"}</td>
+      <td class="prioridad-${inc.prioridad}">${inc.prioridad || "-"}</td>
       <td><span class="badge badge-${inc.estado}">${inc.estado}</span></td>
       <td>${fecha}</td>
       <td class="acciones">
