@@ -1,0 +1,16 @@
+{
+  "name": "rabbitmq-microservices",
+  "version": "1.0.0",
+  "description": "Implementación de comunicación síncrona y asíncrona con RabbitMQ",
+  "main": "index.js",
+  "scripts": {
+    "start:pedidos": "node ms-pedidos.js",
+    "start:validacion": "node ms-validacion.js",
+    "start:notificaciones": "node ms-notificaciones.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.3",
+    "express": "^4.18.2",
+    "axios": "^1.6.0"
+  }
+}
