@@ -1,79 +1,86 @@
+const crypto = require('crypto');
 const express = require('express');
 const axios = require('axios');
-const amqp = require('amqplib');
+const { EVENTOS, CANALES, routingKey, publicar } = require('./rabbitmq');
 
+const NOMBRE = 'ms-pedidos';
 const app = express();
 const port = 3000;
+const PAGOS_URL = process.env.PAGOS_URL || 'http://localhost:3001';
 
 app.use(express.json());
 
-const RABBITMQ_URL = 'amqp://localhost';
-const EXCHANGE_NAME = 'pedidos.exchange';
-const ROUTING_KEY = 'pedido.creado';
-
-// Función para conectar y publicar en RabbitMQ
-async function publicarEventoRabbitMQ(pedido) {
+// Publica sin bloquear el flujo: un fallo de RabbitMQ se informa, pero no tumba el pedido.
+async function publicarEvento(evento, canal, payload) {
     try {
-        const connection = await amqp.connect(RABBITMQ_URL);
-        const channel = await connection.createChannel();
-        
-        // Declaramos el exchange tipo direct
-        await channel.assertExchange(EXCHANGE_NAME, 'direct', { durable: true });
-        
-        const payload = Buffer.from(JSON.stringify(pedido));
-        
-        // Publicar el mensaje
-        channel.publish(EXCHANGE_NAME, ROUTING_KEY, payload);
-        console.log(`[ms-pedidos] Evento asíncrono publicado: ${ROUTING_KEY}`, pedido);
-        
-        // Cerrar la conexión después de un momento para dar tiempo a que se envíe
-        setTimeout(() => {
-            channel.close();
-            connection.close();
-        }, 500);
+        await publicar(NOMBRE, routingKey(evento, canal), payload);
+        return true;
     } catch (error) {
-        console.error('[ms-pedidos] Error publicando en RabbitMQ:', error.message);
+        console.error(`[${NOMBRE}] Error publicando ${evento} en RabbitMQ:`, error.message || error.code || 'broker no disponible');
+        return false;
     }
 }
 
 // Endpoint principal de creación de pedido
 app.post('/api/pedidos', async (req, res) => {
-    const { usuarioId, productoId, cantidad } = req.body;
-    
-    console.log(`[ms-pedidos] Recibida solicitud de pedido - Usuario: ${usuarioId}, Producto: ${productoId}`);
-    
-    try {
-        // 1. Comunicación Síncrona: Validar stock
-        // Esta operación DEBE ser síncrona porque necesitamos saber si hay stock
-        // ANTES de confirmar el pedido al cliente.
-        console.log(`[ms-pedidos] Iniciando comunicación síncrona con ms-validacion...`);
-        const responseValidacion = await axios.get(`http://localhost:3001/api/validacion/stock/${productoId}`);
-        
-        if (responseValidacion.data.valid) {
-            // 2. Proceso Principal: Crear el pedido en BD (Simulado)
-            const pedidoId = `PED-${Math.floor(Math.random() * 10000)}`;
-            const nuevoPedido = { pedidoId, usuarioId, productoId, cantidad, fecha: new Date().toISOString() };
-            console.log(`[ms-pedidos] Pedido creado exitosamente: ${pedidoId}`);
-            
-            // 3. Comunicación Asíncrona: Publicar evento
-            // Acciones secundarias (ej: notificaciones, auditoría) se desacoplan para no bloquear.
-            await publicarEventoRabbitMQ(nuevoPedido);
-            
-            // Responder al cliente inmediatamente
-            return res.status(201).json({
-                mensaje: 'Pedido procesado con éxito.',
-                pedido: nuevoPedido
-            });
-        }
-    } catch (error) {
-        console.error(`[ms-pedidos] Error en validación síncrona:`, error.response ? error.response.data : error.message);
+    const { usuarioId, productoId, cantidad, canal = 'caja' } = req.body;
+
+    if (!usuarioId || !productoId || !Number.isInteger(cantidad) || cantidad <= 0 || !CANALES.includes(canal)) {
         return res.status(400).json({
-            error: 'No se pudo procesar el pedido debido a un error de validación.',
-            detalle: error.response ? error.response.data : error.message
+            error: `Datos inválidos. Se requiere usuarioId, productoId, cantidad (entero > 0) y canal opcional (${CANALES.join(' | ')}).`
         });
     }
+
+    console.log(`[${NOMBRE}] Recibida solicitud de pedido - Usuario: ${usuarioId}, Producto: ${productoId}, Canal: ${canal}`);
+
+    // 1. Comunicación Síncrona: autorizar el pago.
+    // Debe ser síncrona: no se confirma ni se prepara el pedido si el pago no está autorizado.
+    let pago;
+    try {
+        console.log(`[${NOMBRE}] Iniciando comunicación síncrona con ms-pagos...`);
+        const respuesta = await axios.post(`${PAGOS_URL}/api/pagos`, { usuarioId, productoId, cantidad }, { timeout: 3000 });
+        pago = respuesta.data;
+    } catch (error) {
+        if (error.response && error.response.status === 402) {
+            // Pago rechazado: regla de negocio, no una falla técnica
+            const motivo = error.response.data.error;
+            console.log(`[${NOMBRE}] Pedido rechazado: ${motivo}`);
+
+            // Comunicación Asíncrona 2: avisar el rechazo sin bloquear la respuesta
+            await publicarEvento(EVENTOS.PEDIDO_RECHAZADO, canal, {
+                eventId: crypto.randomUUID(), usuarioId, productoId, cantidad, canal, motivo, fecha: new Date().toISOString()
+            });
+
+            return res.status(402).json({ error: 'Pedido rechazado.', detalle: motivo });
+        }
+
+        // ms-pagos caído o con error inesperado
+        console.error(`[${NOMBRE}] ms-pagos no disponible:`, error.message);
+        return res.status(503).json({
+            error: 'Servicio de pagos no disponible. Intente nuevamente.',
+            detalle: error.message
+        });
+    }
+
+    // 2. Proceso principal: guardar el pedido confirmado (persistencia simulada)
+    const pedidoId = `PED-${crypto.randomUUID()}`;
+    const nuevoPedido = {
+        eventId: crypto.randomUUID(), pedidoId, usuarioId, productoId, cantidad, canal,
+        transaccionId: pago.transaccionId,
+        fecha: new Date().toISOString()
+    };
+    console.log(`[${NOMBRE}] Pedido creado exitosamente: ${pedidoId}`);
+
+    // 3. Comunicación Asíncrona 1: cocina, notificaciones y auditoría reaccionan en segundo plano
+    const eventoPublicado = await publicarEvento(EVENTOS.PEDIDO_CREADO, canal, nuevoPedido);
+
+    return res.status(201).json({
+        mensaje: 'Pedido procesado con éxito.',
+        pedido: nuevoPedido,
+        eventoPublicado
+    });
 });
 
 app.listen(port, () => {
-    console.log(`[ms-pedidos] Escuchando en http://localhost:${port}`);
+    console.log(`[${NOMBRE}] Escuchando en http://localhost:${port}`);
 });
