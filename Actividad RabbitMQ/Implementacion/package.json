@@ -4,9 +4,12 @@
   "description": "Implementación de comunicación síncrona y asíncrona con RabbitMQ",
   "main": "index.js",
   "scripts": {
+    "start:pagos": "node ms-pagos.js",
+    "start:validacion": "node ms-pagos.js",
     "start:pedidos": "node ms-pedidos.js",
-    "start:validacion": "node ms-validacion.js",
-    "start:notificaciones": "node ms-notificaciones.js"
+    "start:cocina": "node ms-cocina.js",
+    "start:notificaciones": "node ms-notificaciones.js",
+    "start:auditoria": "node ms-auditoria.js"
   },
   "dependencies": {
     "amqplib": "^0.10.3",
